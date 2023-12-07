@@ -46,7 +46,7 @@ func main() {
 	eg.Go(func() error {
 		signalChan := make(chan os.Signal)
 		defer close(signalChan)
-		signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM, syscall.SIGKILL)
 		defer signal.Reset(syscall.SIGTERM)
 		<-signalChan
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
@@ -58,6 +58,24 @@ func main() {
 	})
 
 	eg.Go(func() error {
+		browserCtx, browserCtxCancel := context.WithCancel(context.Background())
+		defer browserCtxCancel()
+		go func() {
+			d := net.Dialer{}
+			for {
+				_, err := d.DialContext(browserCtx, "tcp", serverAddr)
+				if errors.Is(err, context.Canceled) {
+					return
+				} else if err == nil {
+					serverUrl := "http://" + serverAddr
+					log.Printf("opening browser: %s", serverUrl)
+					if err := browser.OpenURL(serverUrl); err != nil {
+						log.Printf("could not open browser: %+v", err)
+					}
+					return
+				}
+			}
+		}()
 		if err := server.ListenAndServe(); errors.Is(err, http.ErrServerClosed) || err == nil {
 			return nil
 		} else {
@@ -65,21 +83,6 @@ func main() {
 		}
 	})
 
-	hasOpenedBrowser := false
-	browserOpeningTimer := time.AfterFunc(time.Millisecond*250, func() {
-		serverUrl := "http://" + serverAddr
-		log.Printf("opening browser: %s", serverUrl)
-		_ = browser.OpenURL(serverUrl)
-		hasOpenedBrowser = true
-	})
-	defer func() {
-		// Stop and drain the timer. This is proper hygiene but
-		// will also prevent the browser from opening if the server
-		// fails to start
-		if !browserOpeningTimer.Stop() && !hasOpenedBrowser {
-			<-browserOpeningTimer.C
-		}
-	}()
 	if err := eg.Wait(); err != nil {
 		log.Fatalf("an unexpected error has occurred: %s", err)
 	}
