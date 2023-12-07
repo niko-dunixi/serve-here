@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pkg/browser"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -33,8 +34,9 @@ func main() {
 		fileHandler.ServeHTTP(w, r)
 	}))
 
+	serverAddr := net.JoinHostPort(host, port)
 	server := http.Server{
-		Addr:    net.JoinHostPort(host, port),
+		Addr:    serverAddr,
 		Handler: mux,
 	}
 
@@ -63,6 +65,21 @@ func main() {
 		}
 	})
 
+	hasOpenedBrowser := false
+	browserOpeningTimer := time.AfterFunc(time.Millisecond*250, func() {
+		serverUrl := "http://" + serverAddr
+		log.Printf("opening browser: %s", serverUrl)
+		_ = browser.OpenURL(serverUrl)
+		hasOpenedBrowser = true
+	})
+	defer func() {
+		// Stop and drain the timer. This is proper hygiene but
+		// will also prevent the browser from opening if the server
+		// fails to start
+		if !browserOpeningTimer.Stop() && !hasOpenedBrowser {
+			<-browserOpeningTimer.C
+		}
+	}()
 	if err := eg.Wait(); err != nil {
 		log.Fatalf("an unexpected error has occurred: %s", err)
 	}
